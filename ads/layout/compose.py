@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent
 BG_PATH = ROOT / "bg.png"
@@ -178,6 +178,35 @@ def left_vignette(size: int) -> Image.Image:
     return layer.filter(ImageFilter.GaussianBlur(20))
 
 
+def overlay_portrait(canvas: Image.Image) -> None:
+    """Place the author in the right corner — Avito 'face of the listing'."""
+    path = ROOT / "portrait.png"
+    if not path.exists():
+        return
+    person = Image.open(path).convert("RGBA")
+    target_h = 1240
+    scale = target_h / person.size[1]
+    new_w = max(1, int(round(person.size[0] * scale)))
+    person = person.resize((new_w, target_h), Image.Resampling.LANCZOS)
+
+    fade_w = max(1, int(new_w * 0.08))
+    fade = Image.new("L", person.size, 255)
+    fd = ImageDraw.Draw(fade)
+    for x in range(fade_w):
+        fd.line([(x, 0), (x, target_h)], fill=int(255 * (x / fade_w) ** 1.15))
+    alpha = ImageChops.multiply(person.split()[-1], fade)
+    person.putalpha(alpha)
+
+    x = max(1348, SIZE - new_w + 80)
+    y = SIZE - target_h + 150
+
+    shadow = Image.new("RGBA", person.size, (0, 0, 0, 0))
+    sh = person.split()[-1].filter(ImageFilter.GaussianBlur(28))
+    shadow.putalpha(sh.point(lambda v: int(v * 0.55)))
+    canvas.alpha_composite(shadow, (x - 18, y + 22))
+    canvas.alpha_composite(person, (x, y))
+
+
 def cyan_glow(size: tuple[int, int]) -> Image.Image:
     w, h = size
     glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -319,6 +348,8 @@ def compose() -> Image.Image:
     bd.rounded_rectangle((0, 0, cta_w - 1, cta_h - 1), radius=cta_h // 2, fill=CRIMSON)
     bd.text((cta_w / 2, cta_h / 2 - 2), cta, font=f_cta, fill=WHITE, anchor="mm")
     canvas.alpha_composite(btn, (cta_x, cta_y))
+
+    overlay_portrait(canvas)
 
     print(
         "layout",

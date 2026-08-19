@@ -137,33 +137,33 @@ def make_glass(
     return Image.alpha_composite(out, edge)
 
 
+def pill_text_size(fnt: ImageFont.FreeTypeFont, text: str) -> tuple[int, int]:
+    tw = int(round(fnt.getlength(text)))
+    box = fnt.getbbox(text, anchor="lt")
+    th = box[3] - box[1]
+    return tw, th
+
+
 def draw_pill(
     canvas: Image.Image,
     xy: tuple[int, int],
     text: str,
     fnt: ImageFont.FreeTypeFont,
-    min_w: int,
-    pad_x: int = 40,
-    pad_y: int = 22,
-) -> tuple[int, int]:
-    dummy = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    bbox = dummy.textbbox((0, 0), text, font=fnt)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    w = max(min_w, tw + pad_x * 2)
-    h = th + pad_y * 2
+    w: int,
+    h: int,
+) -> None:
     x, y = xy
     pill = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     pd = ImageDraw.Draw(pill)
     pd.rounded_rectangle(
         (1, 1, w - 2, h - 2),
         radius=h // 2,
-        fill=(6, 10, 22, 155),
+        fill=(6, 10, 22, 170),
         outline=CYAN_LINE,
         width=3,
     )
     pd.text((w / 2, h / 2 - 1), text, font=fnt, fill=WHITE, anchor="mm")
     canvas.alpha_composite(pill, (x, y))
-    return w, h
 
 
 def left_vignette(size: int) -> Image.Image:
@@ -208,7 +208,7 @@ def compose() -> Image.Image:
     f_cta = font(FONT_UI, 44)
 
     left = 88
-    tracking_display = -0.035
+    tracking_display = -0.02
 
     # Width guard: shrink display size if the longer word would clip.
     longest = max(
@@ -240,7 +240,7 @@ def compose() -> Image.Image:
     draw.ellipse((dot_cx - dot_r - 3, dot_cy - dot_r - 3, dot_cx + dot_r + 3, dot_cy + dot_r + 3), fill=(0, 0, 0, 200))
     draw.ellipse((dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r), fill=CRIMSON)
 
-    sub_y = rule_y + 56
+    sub_y = rule_y + 68
     draw_tracked(
         draw,
         (left, sub_y),
@@ -250,72 +250,88 @@ def compose() -> Image.Image:
         tracking=0.055,
     )
 
-    dummy = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    pad_x, pad_y = 40, 22
-    gap_x, gap_y = 18, 18
-    col_ws = [0, 0]
-    pill_h = 0
+    # Tight vertical rhythm: same left edge, equal pill cells, glass hugs content.
+    pad_x, pad_y = 40, 24
+    gap_x, gap_y = 20, 20
+    panel_pad_x, panel_pad_y = 40, 40
+    gap_sub_to_glass = 176  # clearly below the subtitle, not stuck to it
+    gap_glass_to_cta = 72
+
+    max_th = 0
+    col_tw = [0, 0]
     for left_t, right_t in PILLS:
         for col, t in enumerate((left_t, right_t)):
-            bbox = dummy.textbbox((0, 0), t, font=f_pill)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            col_ws[col] = max(col_ws[col], tw + pad_x * 2)
-            pill_h = max(pill_h, th + pad_y * 2)
-
-    inner_w = col_ws[0] + gap_x + col_ws[1]
+            tw, th = pill_text_size(f_pill, t)
+            col_tw[col] = max(col_tw[col], tw)
+            max_th = max(max_th, th)
+    col_w = [tw + pad_x * 2 for tw in col_tw]
+    pill_h = max_th + pad_y * 2
+    inner_w = col_w[0] + gap_x + col_w[1]
     inner_h = pill_h * 3 + gap_y * 2
-    panel_pad_x, panel_pad_y = 34, 30
-    pills_origin_x = left + 6
-    pills_origin_y = sub_y + int(f_sub.size * 1.35)
+
+    sub_box = f_sub.getbbox("СОВРЕМЕННЫЙ ДИЗАЙН  ·  FIGMA → КОД", anchor="lt")
+    sub_h = sub_box[3] - sub_box[1]
+    panel_x0 = left
+    panel_y0 = sub_y + sub_h + gap_sub_to_glass
+    panel_x1 = panel_x0 + panel_pad_x * 2 + inner_w
+    panel_y1 = panel_y0 + panel_pad_y * 2 + inner_h
+    panel = tuple(int(round(v)) for v in (panel_x0, panel_y0, panel_x1, panel_y1))
+    panel_x0, panel_y0, panel_x1, panel_y1 = panel
+
+    pills_origin_x = panel_x0 + panel_pad_x
+    pills_origin_y = panel_y0 + panel_pad_y
 
     cta = "Консультация бесплатно"
-    cta_bbox = dummy.textbbox((0, 0), cta, font=f_cta)
-    cta_tw, cta_th = cta_bbox[2] - cta_bbox[0], cta_bbox[3] - cta_bbox[1]
+    cta_tw = int(round(f_cta.getlength(cta)))
+    cta_box = f_cta.getbbox(cta, anchor="lt")
+    cta_th = cta_box[3] - cta_box[1]
     cta_h = cta_th + 36
     cta_w = cta_tw + 88
-    bottom_pad = 56
     cta_x = left
-    cta_y = SIZE - bottom_pad - cta_h
+    cta_y = panel_y1 + gap_glass_to_cta
+    if cta_y + cta_h > SIZE - 40:
+        overflow = cta_y + cta_h - (SIZE - 40)
+        panel_y0 -= overflow
+        panel_y1 -= overflow
+        pills_origin_y -= overflow
+        cta_y -= overflow
+        panel = (panel_x0, panel_y0, panel_x1, panel_y1)
 
-    # Glass hugs the pills, then stretches down toward the CTA so the footer
-    # has weight without covering the orb on the far right.
-    panel = (
-        pills_origin_x - panel_pad_x,
-        pills_origin_y - panel_pad_y,
-        min(pills_origin_x + inner_w + panel_pad_x, int(SIZE * 0.74)),
-        min(cta_y - 24, pills_origin_y + inner_h + panel_pad_y + 120),
-    )
-
-    glass = make_glass(canvas, panel, radius=48, tint=(5, 9, 22, 64), blur=22)
+    glass = make_glass(canvas, panel, radius=44, tint=(5, 9, 22, 72), blur=22)
     canvas.alpha_composite(glass, (panel[0], panel[1]))
 
     cy = pills_origin_y
     for left_t, right_t in PILLS:
-        draw_pill(canvas, (pills_origin_x, cy), left_t, f_pill, min_w=col_ws[0], pad_x=pad_x, pad_y=pad_y)
-        draw_pill(
-            canvas,
-            (pills_origin_x + col_ws[0] + gap_x, cy),
-            right_t,
-            f_pill,
-            min_w=col_ws[1],
-            pad_x=pad_x,
-            pad_y=pad_y,
-        )
+        draw_pill(canvas, (pills_origin_x, cy), left_t, f_pill, col_w[0], pill_h)
+        draw_pill(canvas, (pills_origin_x + col_w[0] + gap_x, cy), right_t, f_pill, col_w[1], pill_h)
         cy += pill_h + gap_y
 
-    glow = Image.new("RGBA", (cta_w + 90, cta_h + 90), (0, 0, 0, 0))
+    glow = Image.new("RGBA", (cta_w + 64, cta_h + 48), (0, 0, 0, 0))
     ImageDraw.Draw(glow).rounded_rectangle(
-        (20, 20, cta_w + 69, cta_h + 69),
-        radius=cta_h // 2 + 12,
-        fill=(252, 28, 70, 80),
+        (16, 20, cta_w + 47, cta_h + 27),
+        radius=cta_h // 2 + 8,
+        fill=(252, 28, 70, 55),
     )
-    canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(24)), (cta_x - 45, cta_y - 45))
+    canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(16)), (cta_x - 32, cta_y - 8))
 
     btn = Image.new("RGBA", (cta_w, cta_h), (0, 0, 0, 0))
     bd = ImageDraw.Draw(btn)
     bd.rounded_rectangle((0, 0, cta_w - 1, cta_h - 1), radius=cta_h // 2, fill=CRIMSON)
     bd.text((cta_w / 2, cta_h / 2 - 2), cta, font=f_cta, fill=WHITE, anchor="mm")
     canvas.alpha_composite(btn, (cta_x, cta_y))
+
+    print(
+        "layout",
+        {
+            "sub_bottom": sub_y + sub_h,
+            "glass": panel,
+            "gap_sub_glass": panel_y0 - (sub_y + sub_h),
+            "pills": (pills_origin_x, pills_origin_y, col_w, pill_h),
+            "cta": (cta_x, cta_y, cta_w, cta_h),
+            "gap_glass_cta": cta_y - panel_y1,
+            "bottom_pad": SIZE - (cta_y + cta_h),
+        },
+    )
 
     return canvas
 

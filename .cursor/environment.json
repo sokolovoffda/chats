@@ -1,0 +1,4 @@
+{
+  "name": "chats",
+  "install": "if [ -f requirements.txt ]; then python3 -m pip install --user -r requirements.txt; else echo 'requirements.txt not present; skipping dependency install'; fi"
+}
